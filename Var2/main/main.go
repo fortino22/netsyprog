@@ -14,6 +14,7 @@ func main() {
 	mux.HandleFunc("/route1", middleware.MethodValidation(handlers.Route1Handler))
 	mux.HandleFunc("/route2", middleware.MethodValidation(handlers.Route2Handler))
 	mux.HandleFunc("/route3/", middleware.MethodValidation(handlers.Route3Handler))
+	mux.HandleFunc("/route4", middleware.MethodValidation(handlers.Route4Handler))
 
 	server := &http.Server{
 		Addr:         ":8080",
