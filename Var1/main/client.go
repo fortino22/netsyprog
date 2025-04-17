@@ -3,53 +3,66 @@ package main
 import (
     "bufio"
     "fmt"
+    "io"
     "net"
     "os"
+    "strings"
     "time"
-    "var1/config"
 )
 
+type Payload interface {
+    GetContent() string
+    GetSize() int
+    Send(writer io.Writer) (int, error)
+}
+
+type TextPayload struct {
+    Content string
+}
+
+func (p TextPayload) GetContent() string {
+    return p.Content
+}
+
+func (p TextPayload) GetSize() int {
+    return len(p.Content)
+}
+
+func (p TextPayload) Send(writer io.Writer) (int, error) {
+    messageWithNewline := p.Content + "\n"
+    return fmt.Fprint(writer, messageWithNewline)
+}
+
 func main() {
-    connection, err := net.Dial("tcp", "localhost:8888")
+    conn, err := net.Dial("tcp", "localhost:8888")
     if err != nil {
         panic(err)
     }
-    defer connection.Close()
+    defer conn.Close()
 
-    fmt.Println("Successfully connected to the proxy server.")
-    connection.SetDeadline(time.Now().Add(30 * time.Second))
+    conn.SetDeadline(time.Now().Add(10 * time.Minute))
+    fmt.Println("Connected to proxy server.")
 
     keyboardScanner := bufio.NewScanner(os.Stdin)
-    messageBuffer := make([]byte, config.BaseBufferSize)
-    messageWriter := bufio.NewWriterSize(connection, config.BaseBufferSize)
 
     for {
-        fmt.Print("Type your message: ")
+        fmt.Print("Enter your message (type 'exit' to quit): ")
         keyboardScanner.Scan()
-        userMessage := keyboardScanner.Text()
+        message := keyboardScanner.Text()
 
-        fmt.Printf("Current message buffer size: %d bytes\n", len(messageBuffer))
-        connection.SetDeadline(time.Now().Add(30 * time.Second))
-
-        if len(userMessage) > len(messageBuffer) && len(messageBuffer) < config.MaxBufferSize {
-            newBufferSize := len(messageBuffer) * 2
-            if newBufferSize > config.MaxBufferSize {
-                newBufferSize = config.MaxBufferSize
-            }
-            messageBuffer = make([]byte, newBufferSize)
-            messageWriter = bufio.NewWriterSize(connection, newBufferSize)
-            fmt.Printf("Buffer size expanded to: %d bytes\n", len(messageBuffer))
+        if strings.ToLower(message) == "exit" {
+            fmt.Println("Exiting the program.")
+            break
         }
 
-        _, err := fmt.Fprintf(messageWriter, userMessage+"\n")
+        payload := TextPayload{Content: message}
+        
+        bytesSent, err := payload.Send(conn)
         if err != nil {
-            if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-                fmt.Println("The connection has timed out.")
-            } else {
-                fmt.Println("Failed to send the message:", err)
-            }
-            return
+            fmt.Println("Error sending message:", err)
+            break
         }
-        messageWriter.Flush()
+
+        fmt.Printf("Message sent (%d bytes)\n", bytesSent)
     }
 }

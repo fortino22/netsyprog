@@ -1,13 +1,14 @@
 package main
 
 import (
-    "bufio"
     "fmt"
+    "io"
     "net"
+    "sync"
     "time"
 )
 
-const proxyTimeout = 30 * time.Second
+const timeout = 10 * time.Minute
 
 func main() {
     listener, err := net.Listen("tcp", "localhost:8888")
@@ -16,7 +17,7 @@ func main() {
     }
     defer listener.Close()
 
-    fmt.Println("Proxy is running on localhost:8888")
+    fmt.Println("Proxy listening on localhost:8888")
 
     for {
         client, err := listener.Accept()
@@ -30,37 +31,38 @@ func main() {
 
 func handleConnection(client net.Conn) {
     defer client.Close()
-
-    fmt.Printf("New client connected: %s\n", client.RemoteAddr())
+    fmt.Printf("Client connected: %s\n", client.RemoteAddr())
 
     server, err := net.Dial("tcp", "localhost:80")
     if err != nil {
-        fmt.Printf("Unable to connect to server: %v\n", err)
+        fmt.Println("Could not connect to server:", err)
         return
     }
     defer server.Close()
 
-    fmt.Printf("Connected to target server: %s\n", server.RemoteAddr())
+    var wg sync.WaitGroup
+    wg.Add(2)
 
-    done := make(chan bool)
+    go func() {
+        defer wg.Done()
+        n, err := io.Copy(server, client)
+        if err != nil {
+            fmt.Printf("Error forwarding client->server: %v\n", err)
+        }
+        fmt.Printf("Forwarded %d bytes from client to server\n", n)
+        server.(*net.TCPConn).CloseWrite()
+    }()
 
-    go relay(client, server, done)
-    go relay(server, client, done)
+    go func() {
+        defer wg.Done()
+        n, err := io.Copy(client, server)
+        if err != nil {
+            fmt.Printf("Error forwarding server->client: %v\n", err)
+        }
+        fmt.Printf("Forwarded %d bytes from server to client\n", n)
+        client.(*net.TCPConn).CloseWrite()
+    }()
 
-    <-done
-    fmt.Printf("Client disconnected: %s\n", client.RemoteAddr())
-}
-
-func relay(src net.Conn, dst net.Conn, done chan bool) {
-    reader := bufio.NewScanner(src)
-    for reader.Scan() {
-        data := reader.Text()
-        fmt.Fprintf(dst, "%s\n", data)
-        src.SetDeadline(time.Now().Add(proxyTimeout))
-        dst.SetDeadline(time.Now().Add(proxyTimeout))
-    }
-    if err := reader.Err(); err != nil {
-        fmt.Printf("Relay error: %v\n", err)
-    }
-    done <- true
+    wg.Wait()
+    fmt.Printf("Disconnected: %s\n", client.RemoteAddr())
 }
